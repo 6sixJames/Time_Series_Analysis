@@ -1,0 +1,122 @@
+---
+editor_options:
+  chunk_output_type: console
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# **TIME SERIES - FINAL PROJECT**
+### August 14th, 2019
+***
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Import necessary libraries**
+```{r message=FALSE, warning=FALSE}
+library(readxl)
+library(tseries)
+library(ggplot2)
+library(fpp)
+library(TSA)
+library(MuMIn)
+library(stats)
+library(forecast)
+library(dplyr)
+library(Metrics)
+library(vars)
+library(lubridate)
+```
+
+Set working directory
+```{r}
+datapath <- "C:/Users/Nick/Desktop/time_series/Final_Project"
+setwd(datapath)
+```
+
+Read in data and fix some issues with columns, names, etc.
+```{r}
+avocado <- read.table("avocado.csv", header=TRUE, sep = ",")
+
+# delete index and date row
+avocado <- avocado[which(avocado$region == "Chicago" & avocado$type == "conventional"),-1]
+
+# change column names
+colnames(avocado) <- c("Date", "AveragePrice", "TotalVolume",
+                       "SmallHaasVolume", "LargeHaasVolume",
+                       "XtraLargeHaasVolume", "TotalBags",
+                       "SmallBags", "LargeBags", "XtraLargeBags",
+                       "Type", "Year", "Region")
+
+# order by Date ascending
+avocado <- avocado[order(avocado$Date),]
+rownames(avocado) <- 1:nrow(avocado)
+```
+
+
+Transform data.frame into ts object using average price and total volume
+```{r}
+avocado.ts <- ts(avocado["TotalVolume"], freq=365.25/7,
+                 start=decimal_date(ymd("2015-01-04")))
+```
+
+Plot avocado.ts
+```{r}
+autoplot(avocado.ts, xlab="Time Horizon", ylab="Total Volumes",
+         main="Time Series of Avocado Volume in Chicago")
+```
+
+Let's create a training set with first 154 weeks and a test set with 15 weeks 2017-12-10
+```{r}
+train.avocado.ts <- window(avocado.ts, decimal_date(ymd("2015-01-04")), decimal_date(ymd("2017-12-17")))
+test.avocado.ts <- window(avocado.ts, decimal_date(ymd("2017-12-17")))
+```
+
+
+Augmented Dickey-Fuller Test to check for stationarity in the training set.
+```{r}
+adf.test(train.avocado.ts)
+```
+
+P value of Dickey-Fuller test is significant so the training dataset is stationary.
+```{r}
+tsdisplay(train.avocado.ts, main="Time Series of Avocado Volume in Chicago")
+```
+
+Looks like there is some significant autocorrelation in the series. Let's try taking the first difference.
+```{r}
+tsdisplay(diff(train.avocado.ts))
+```
+
+Now let's use auto.arima to fit a model on the training data.
+```{r warning=FALSE}
+(fit.auto <- auto.arima(train.avocado.ts, seasonal = TRUE, max.p = 2, max.q = 2, max.P = 2, max.Q = 2,
+                        allowdrift = TRUE, num.cores = 4, d=1))
+checkresiduals(fit.auto)
+```
+
+That looks pretty good.
+
+Let's run the forcasting function on the training set for 15 weeks.
+```{r}
+foreCaster<- forecast::forecast
+fcast <-foreCaster(fit.auto, h=15, level=c(50, 95))
+```
+
+Plot the forecast and overlay the test set values
+```{r}
+autoplot(test.avocado.ts, series="Actuals", lwd=2) +
+  autolayer(fcast$mean, series="SARIMA Forecast", lwd=2) +
+  ggtitle("Forecast for Avocado Volume in Chicago") +
+  xlab("Forecast Horizon") + ylab("Avocado Volume")
+```
+
+That look's really strong. Let's calculate some metrics to see how the model performed against the test set.
+```{r}
+foreCastAccuracy<-forecast::accuracy
+foreCastAccuracy(fcast$mean, test.avocado.ts)
+```
+
+**Our model has a mean % error of 9.7% which is within the acceptable accuracy threshold.**
